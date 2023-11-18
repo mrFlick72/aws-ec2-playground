@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: It is a simple EC2 stack to deploy an apache with some auto healing
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+
+  SubnetId:
+    Type: 'String'
+    Description: subnet in which create the EC2 instance
+
+  VpcId:
+    Type: 'String'
+    Description: VpcId in which create the EC2 instance
+
+Resources:
+  Instance:
+    Type: 'AWS::EC2::Instance'
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          install:
+            - install-apache
+        install-apache:
+          packages:
+            yum:
+              httpd: [ ]
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+                verbose=false
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource Instance  --configsets install --region ${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+            /var/www/html/index.html:
+              content: !Sub |
+                <html><head><title>Cloud Formation Example</title></head><body><h1>It Works!!! <br/> again!!!</h1><body></html>
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - "/var/www/html/index.html"
+
+    Properties:
+      ImageId: !Ref LatestAmiId
+      KeyName: contabo
+      InstanceType: t2.micro
+      SubnetId: !Ref SubnetId
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash -xe
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource Instance --region ${AWS::Region} --configsets install
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Instance --region ${AWS::Region}
+      SecurityGroupIds:
+        - !Ref HttpSecurityGroup
+
+  HttpSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP EC2 Security Group
+      GroupName: http-ec2-security-group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+
+Outputs:
+  InstanceDNSName:
+    Description: The DNSName of the instance
+    Value: !GetAtt Instance.PublicDnsName
