@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AWS Playground Workspace + FSx CloudFormation template
+
+Resources:
+  Workspace:
+    Type: AWS::WorkSpaces::Workspace
+    Properties:
+      BundleId: "wsb-gk1wpk43z"
+      DirectoryId: !ImportValue MsAD
+      Tags:
+        - Key: "Name"
+          Value: "aws-playground-workspace"
+        - Key: "project"
+          Value: "aws-playground"
+
+      UserName: admin
+      UserVolumeEncryptionEnabled: False
+      WorkspaceProperties:
+        RunningMode: AUTO_STOP
+        ComputeTypeName: STANDARD
+        RootVolumeSizeGib: 80
+        UserVolumeSizeGib: 50

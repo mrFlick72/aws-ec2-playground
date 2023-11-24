@@ -1,6 +1,6 @@
 #  Simple Apache On EC2
 
-The Cloud Formation Stack is intended to provision a EC2 instance with a simpel apache installed 
+The Cloud Formation Stack is intended to provision a EC2 instance with a simple apache installed 
 with a custom page. 
 
 The interesting thing in this playground is about how to provision an EC2 instance 
@@ -10,4 +10,4 @@ Cloud Formation point of view, and keep in sync the cfn-init across multiple clo
 
 ## Architecture
 
-![img.png](img.png)
+![architecture.png](architecture.png)

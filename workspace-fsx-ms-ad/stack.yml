@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AWS Playground Workspace + FSx CloudFormation template
+
+Parameters:
+  SubnetIDA:
+    Type: 'String'
+    Description: first subnet id
+  SubnetIDB:
+    Type: 'String'
+    Description: second subnet id
+  VPCId:
+    Type: 'String'
+    Description: vpc id
+
+Resources:
+  AD:
+    Type: AWS::DirectoryService::MicrosoftAD
+    Properties:
+      CreateAlias: True
+      Edition: Standard
+      Name: <your-directory-name>
+      Password: <your-password>
+      ShortName: directory
+      VpcSettings:
+        SubnetIds:
+          - !Ref SubnetIDA
+          - !Ref SubnetIDB
+        VpcId: !Ref VPCId
+
+  FsxForWindows:
+    Type: AWS::FSx::FileSystem
+    Properties:
+      FileSystemType: WINDOWS
+      SecurityGroupIds:
+        - !Ref FsxForWindowsSG
+      StorageCapacity: 32
+      StorageType: SSD
+      SubnetIds:
+        - "SubnetIDA"
+      Tags:
+        - Key: "Name"
+          Value: "aws-playground-workspace"
+        - Key: "project"
+          Value: "aws-playground"
+      WindowsConfiguration:
+        ActiveDirectoryId: !Ref AD
+        ThroughputCapacity: 32
+        Aliases:
+          - <your-alias>
+        AutomaticBackupRetentionDays: 0
+        CopyTagsToBackups: False
+        DeploymentType: SINGLE_AZ_1
+
+  FsxForWindowsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FsxForWindowsSG
+      GroupName: FsxForWindowsSG
+      VpcId: !Ref VPCId
+
+
+Outputs:
+  MsAD:
+    Description: AD reference
+    Value: !Ref AD
+    Export:
+      Name: MsAD
+  FsxForWindowsSG:
+    Description: FsxForWindowsSG reference
+    Value: !Ref FsxForWindowsSG
+    Export:
+      Name: FsxForWindowsSG
