@@ -21,7 +21,7 @@ admin console to consult the mounting command provide in the console.
 
 For powershell it should look like below:
 
-> net use Z: \\<your-fsx>\share
+ ```net use Z: \\<your-fsx>\share```
 
 ## Architecture
 
