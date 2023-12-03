@@ -5,7 +5,7 @@ Description: >
 
 Parameters:
   CertArn:
-    Type: String
+    Type: "String"
     Description: The AWS Cert Manager ARN for the your https api certificate
   TodoApiResourceServerBaseUri:
     Type: "String"
@@ -74,7 +74,7 @@ Resources:
       AllowedOAuthScopes:
         - !Sub
           - "${TodoApiResourceServer}/todo.all"
-          - TodoApiResourceServerBaseUri: !Ref TodoApiResourceServerBaseUri
+          - TodoApiResourceServerBaseUri: !Ref:
 
   TodoApi:
     Type: AWS::Serverless::Api
