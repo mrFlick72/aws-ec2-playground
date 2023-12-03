@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless Todo Service 
+
+Parameters:
+  CertArn:
+    Type: String
+    Description: The AWS Cert Manager ARN for the your https api certificate
+  TodoApiResourceServerBaseUri:
+    Type: "String"
+    Description: IDP base url registered in route53
+  HostedZoneId:
+    Type: "String"
+    Description: route53 host zone id
+  ApiDomain:
+    Type: "String"
+    Description: Api base url registered in route53
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: serverless-todo
+    Description: Serverless Todo Service
+    Author: mrFlick72
+    SpdxLicenseId: Apache-2.0
+    Labels: ['playground']
+    SemanticVersion: 0.0.1
+
+Globals:
+  Function:
+    Timeout: 20
+    MemorySize: 128
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: aws-playground-asm-todo-service
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: auth-todo
+      UserPoolId: !Ref UserPool
+
+  TodoApiResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: !Ref TodoApiResourceServerBaseUri
+      Name: todo
+      Scopes:
+        - ScopeDescription: Grant all permission
+          ScopeName: todo.all
+        - ScopeDescription: Grant to read one or more Todo
+          ScopeName: todo.read
+        - ScopeDescription: Grant to write a new Todo
+          ScopeName: todo.write
+        - ScopeDescription: Grant to delete a Todo
+          ScopeName: todo.delete
+      UserPoolId: !Ref UserPool
+
+  UserPoolClientApp:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: TodoApiResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      SupportedIdentityProviders:
+        - COGNITO
+      ClientName: aws-playground-asm-todo-service
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Sub
+          - "${TodoApiResourceServer}/todo.all"
+          - TodoApiResourceServerBaseUri: !Ref TodoApiResourceServerBaseUri
+
+  TodoApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prd
+      Auth:
+        DefaultAuthorizer: TokenAuthorizer
+        InvokeRole: CALLER_CREDENTIALS
+        AddDefaultAuthorizerToCorsPreflight: false
+        ApiKeyRequired: false
+        Authorizers:
+          TokenAuthorizer:
+            FunctionArn: !GetAtt LambdaAuthorizer.Arn
+      Domain:
+        DomainName:  !Ref ApiDomain
+        CertificateArn: !Ref CertArn
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+
+
+  TodoStorage:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: Todo
+
+  LambdaAuthorizer:
+    Type: AWS::Serverless::Function
+    Metadata:
+      SkipBuild: True
+    Properties:
+      AutoPublishAlias: "live"
+      DeploymentPreference:
+        Type: Linear10PercentEvery1Minute
+      CodeUri: app/authorizer/app.zip
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          USER_POOL_ID: !Ref UserPool
+
+      Architectures:
+        - x86_64
+
+  DeleteTodo:
+    Type: AWS::Serverless::Function
+    Connectors:
+      MyConn:
+        Properties:
+          Destination:
+            Id: TodoStorage
+          Permissions:
+            - Write
+    Properties:
+      AutoPublishAlias: "live"
+      DeploymentPreference:
+        Type: Linear10PercentEvery1Minute
+      CodeUri: app/delete-todo
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: TodoApi
+            Path: /todo/{id}
+            Method: delete
+  ReadTodo:
+    Type: AWS::Serverless::Function
+    Connectors:
+      MyConn:
+        Properties:
+          Destination:
+            Id: TodoStorage
+          Permissions:
+            - Read
+    Properties:
+      AutoPublishAlias: "live"
+      DeploymentPreference:
+        Type: Linear10PercentEvery1Minute
+      CodeUri: app/get-todos
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: TodoApi
+            Path: /todo
+            Method: get
+  SaveTodo:
+    Type: AWS::Serverless::Function
+    Connectors:
+      MyConn:
+        Properties:
+          Destination:
+            Id: TodoStorage
+          Permissions:
+            - Write
+    Properties:
+      AutoPublishAlias: "live"
+      DeploymentPreference:
+        Type: Linear10PercentEvery1Minute
+      CodeUri: app/save-todo
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: TodoApi
+            Path: /todo
+            Method: put

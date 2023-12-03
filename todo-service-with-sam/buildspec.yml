@@ -1,0 +1,19 @@
+version: 0.2
+env:
+  BUCKET: "${{you-bucket-name}}"
+phases:
+  pre_build:
+    commands:
+      - cd app/authorizer
+      - python3 -m venv venv
+      - source venv/bin/activate
+      - pip3 install -r requirements.txt
+      - cd venv/lib/python3.11/site-packages
+      - zip -r ../../../../app.zip .
+      - cd ../../../../
+      - zip app.zip app.py
+      - cd ../../
+  build:
+    commands:
+      - sam package --s3-bucket "${BUCKET}" --template-file template.yaml --output-template-file package.yml --force-upload
+      - sam deploy --s3-bucket "${BUCKET}" --stack-name aws-playground-sam-todolist --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
