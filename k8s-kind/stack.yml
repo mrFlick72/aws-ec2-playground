@@ -1,0 +1,269 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: It is a simple EC2 stack to deploy a king k8s distribution
+Parameters:
+  KubeIngressControllerDnsAddress:
+    Type: String
+  KubeApiServerDnsAddress:
+    Type: String
+  Route53HostedZoneId:
+    Type: String
+
+  KubeFileContentParameterName:
+    Type: String
+
+  ClusterName:
+    Type: String
+    Default: kind
+
+  HomeDir:
+    Type: String
+    Default: /home/ec2-user
+
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+
+  SubnetId:
+    Type: 'String'
+    Description: subnet in which create the EC2 instance
+
+  VpcId:
+    Type: 'String'
+    Description: VpcId in which create the EC2 instance
+
+Resources:
+  KubeApiServerAddress:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneId
+      Name: !Ref KubeApiServerDnsAddress
+      ResourceRecords:
+        - !GetAtt Instance.PublicIp
+      TTL: 30
+      Type: A
+  KubeIngressControllerAddress:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneId
+      Name: !Ref KubeIngressControllerDnsAddress
+      ResourceRecords:
+        - !GetAtt Instance.PublicIp
+      TTL: 30
+      Type: A
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: "It is the role with all the minimum permissions for the EC2 with Kind installed"
+      Policies:
+        - PolicyName: ssm-parameter-store
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ssm:PutParameter"
+                  - "ssm:DeleteParameter"
+                  - "ssm:GetParameterHistory"
+                  - "ssm:GetParametersByPath"
+                  - "ssm:GetParameters"
+                  - "ssm:GetParameter"
+                  - "ssm:DeleteParameters"
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KubeFileContentParameterName}
+      RoleName: KindOnEc2Role
+      Tags:
+        - Key: "Name"
+          Value: "kind-on-ec2-role"
+        - Key: "project"
+          Value: "aws-playground"
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: KindOnEc2InstanceRole
+      Roles:
+        - !Ref InstanceRole
+
+  Instance:
+    Type: 'AWS::EC2::Instance'
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT205M
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          install:
+            - configure-cloud-init
+            - install-docker
+            - install-kubectl
+            - install-helm
+            - install-kind
+            - configure-kind
+        configure-cloud-init:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+                verbose=false
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource Instance  --configsets install --region ${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install-docker:
+          packages:
+            yum:
+              docker: [ ]
+          commands:
+            exec:
+              command: |
+                su - ec2-user
+                usermod -aG docker ec2-user
+          services:
+            sysvinit:
+              docker:
+                enabled: 'true'
+                ensureRunning: 'true'
+        install-kubectl:
+          commands:
+            exec:
+              cwd: !Ref HomeDir
+              command: |
+                su - ec2-user
+
+                pwd
+                curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin
+        install-helm:
+          commands:
+            exec:
+              cwd: !Ref HomeDir
+              command: |
+                su - ec2-user
+
+                pwd
+                curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+                chmod 700 get_helm.sh
+                ./get_helm.sh
+        install-kind:
+          commands:
+            exec:
+              cwd: !Ref HomeDir
+              command: |
+                su - ec2-user
+
+                pwd
+                # For AMD64 / x86_64
+                [ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+                # For ARM64
+                [ $(uname -m) = aarch64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-arm64
+                chmod +x ./kind
+                sudo mv ./kind /usr/local/bin/kind
+
+        configure-kind:
+          files:
+            /home/ec2-user/cluster.yml:
+              content: |
+                kind: Cluster
+                apiVersion: kind.x-k8s.io/v1alpha4
+                networking:
+                  apiServerAddress: "0.0.0.0"
+                  apiServerPort: 6443
+                nodes:
+                  - role: control-plane
+                    kubeadmConfigPatches:
+                      - |
+                        kind: InitConfiguration
+                        nodeRegistration:
+                          kubeletExtraArgs:
+                            node-labels: "ingress-ready=true"
+                    extraPortMappings:
+                      - containerPort: 80
+                        hostPort: 80
+                        protocol: TCP
+                      - containerPort: 443
+                        hostPort: 443
+                        protocol: TCP
+              owner: ec2-user
+              group: ec2-user
+          commands:
+            exec:
+              cwd: !Ref HomeDir
+              command: !Sub  |
+                su - ec2-user
+                kind create cluster --config cluster.yml > kind.log
+                sudo chown -R ec2-user:ec2-user .kube 
+                kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+                kubectl delete -A ValidatingWebhookConfiguration ingress-nginx-admission
+                kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
+                
+                aws ssm put-parameter --name ${KubeFileContentParameterName} --type "String" --value "$(cat .kube/config | sed 's/0.0.0.0/${KubeApiServerDnsAddress}/g')" --tier "Advanced" --overwrite
+    Properties:
+      ImageId: !Ref LatestAmiId
+      KeyName: contabo
+      IamInstanceProfile: !Ref InstanceProfile
+      InstanceType: t3.medium
+      SubnetId: !Ref SubnetId
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash -xe
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource Instance --region ${AWS::Region} --configsets install
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Instance --region ${AWS::Region}
+      SecurityGroupIds:
+        - !Ref HttpSecurityGroup
+
+  HttpSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP EC2 Security Group
+      GroupName: http-ec2-security-group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 6443
+          ToPort: 6443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
